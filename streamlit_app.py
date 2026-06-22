@@ -72,7 +72,8 @@ RE_LEY_25413 = re.compile(r"IMP\.\s*LEY\s*25413|LEY\s*25\.?413", re.IGNORECASE)
 RE_IVA_GRAL = re.compile(r"\bIVA\s+GRAL\.?\b", re.IGNORECASE)
 RE_IVA_REDUC = re.compile(r"\bIVA\s+REDUC\.R\.I\.?\b|\bIVA\s+REDUC", re.IGNORECASE)
 RE_IVA_PERCEP = re.compile(r"\bIVA\s+PERCEP\.RG3337\b|\bIVA\s+PERCEP", re.IGNORECASE)
-RE_COMISION_SELLADO = re.compile(r"\bCOMIS\b|\bCOMIS\s|\bCOMIS\.\b|SELLADO", re.IGNORECASE)
+RE_COMISION = re.compile(r"\bCOMIS\b|\bCOMIS\s|\bCOMIS\.\b", re.IGNORECASE)
+RE_SELLADO = re.compile(r"\bSELLADO\b", re.IGNORECASE)
 RE_INTERESES_CC = re.compile(r"\bINT\.CC\b", re.IGNORECASE)
 
 # ---------------- utils ----------------
@@ -209,17 +210,32 @@ def _sum_abs_or_net(df: pd.DataFrame, regex: re.Pattern, neto: bool = True) -> f
 def resumen_operativo(df: pd.DataFrame) -> pd.DataFrame:
     """
     Resumen operativo para registración.
-    Se calcula por concepto neto: débitos positivos y créditos/devoluciones restan.
+
+    Reglas NBSF+:
+    - IVA GRAL. corresponde a gastos/comisiones gravados al 21%.
+      El neto se calcula como IVA / 0.21.
+    - IVA REDUC. R.I. corresponde a intereses/gastos gravados al 10,5%.
+      El neto se toma de INT.CC del resumen para respetar el importe bancario;
+      debe coincidir por redondeos con IVA REDUC. / 0.105.
+    - SELLADO se informa separado, no mezclado con comisiones gravadas.
+    - SIRCREB e IMP. LEY 25413 se calculan netos: débitos suman y créditos/restornos restan.
     """
     if df.empty:
         return pd.DataFrame(columns=["Concepto", "Importe"])
 
+    iva_gral = _sum_abs_or_net(df, RE_IVA_GRAL, neto=True)
+    gastos_comisiones_21 = round(iva_gral / 0.21, 2) if iva_gral else 0.0
+
+    iva_reduc = _sum_abs_or_net(df, RE_IVA_REDUC, neto=True)
+    neto_intereses_105 = _sum_abs_or_net(df, RE_INTERESES_CC, neto=True)
+
     out = [
-        ["INTERESES CUENTA CORRIENTE", _sum_abs_or_net(df, RE_INTERESES_CC, neto=True)],
-        ["COMISIONES / SELLADOS", _sum_abs_or_net(df, RE_COMISION_SELLADO, neto=True)],
-        ["IVA GRAL. (21%)", _sum_abs_or_net(df, RE_IVA_GRAL, neto=True)],
-        ["IVA REDUC. R.I.", _sum_abs_or_net(df, RE_IVA_REDUC, neto=True)],
+        ["GASTOS / COMISIONES (NETO 21%)", gastos_comisiones_21],
+        ["IVA GRAL. (21%)", iva_gral],
+        ["INTERESES CUENTA CORRIENTE (NETO 10,5%)", neto_intereses_105],
+        ["IVA REDUC. R.I. (10,5%)", iva_reduc],
         ["IVA PERCEP. RG3337", _sum_abs_or_net(df, RE_IVA_PERCEP, neto=True)],
+        ["SELLADOS", _sum_abs_or_net(df, RE_SELLADO, neto=True)],
         ["SIRCREB (NETO)", _sum_abs_or_net(df, RE_SIRCREB, neto=True)],
         ["IMP. LEY 25413 (NETO)", _sum_abs_or_net(df, RE_LEY_25413, neto=True)],
     ]
